@@ -946,6 +946,50 @@ func TestChaosExperimentHandler_ListExperiment(t *testing.T) {
 	}
 }
 
+func TestChaosExperimentHandler_ListExperiment_NameSortDirection(t *testing.T) {
+	asc, desc := true, false
+	tests := []struct {
+		name      string
+		ascending *bool
+		want      int
+	}{
+		{name: "ascending true sorts A to Z", ascending: &asc, want: 1},
+		{name: "ascending false sorts Z to A", ascending: &desc, want: -1},
+		{name: "ascending unset sorts Z to A", ascending: nil, want: -1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockServices := NewMockServices()
+			cursor, _ := mongo.NewCursorFromDocuments([]interface{}{bson.D{}}, nil, nil)
+			var captured mongo.Pipeline
+			mockServices.MongodbOperator.On("Aggregate", mock.Anything, mongodb.ChaosExperimentCollection, mock.Anything, mock.Anything).
+				Run(func(args mock.Arguments) { captured = args.Get(2).(mongo.Pipeline) }).
+				Return(cursor, nil).Once()
+
+			_, _ = mockServices.ChaosExperimentHandler.ListExperiment(uuid.New().String(), model.ListExperimentRequest{
+				Sort: &model.ExperimentSortInput{Field: model.ExperimentSortingFieldName, Ascending: tc.ascending},
+			})
+
+			var got interface{}
+			for _, stage := range captured {
+				if stage[0].Key != "$facet" {
+					continue
+				}
+				for _, e := range stage[0].Value.(bson.D) {
+					if e.Key != "scheduled_experiments" {
+						continue
+					}
+					sortStage := e.Value.(bson.A)[0].(bson.D)
+					got = sortStage[0].Value.(bson.D)[0].Value
+				}
+			}
+			if got != tc.want {
+				t.Errorf("name sort direction = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestChaosExperimentHandler_DisableCronExperiment(t *testing.T) {
 
 	projectID := uuid.New().String()
